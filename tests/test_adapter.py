@@ -515,3 +515,313 @@ async def test_query_messages_with_limit_zero_returns_count_only(adapter, mock_i
 
     # Verify optimization: FETCH was never called (no messages to fetch)
     mock_imap_client.fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_parse_mime_encoded_subject_base64(adapter, mock_imap_client):
+    """Test that Base64 MIME-encoded subjects are decoded."""
+    # Mock SEARCH to return UID
+    mock_imap_client.search.return_value = [42]
+
+    # Mock FETCH with Base64-encoded subject
+    # =?UTF-8?B?SGVsbG8gV29ybGQ=?= → "Hello World"
+    mock_envelope = Envelope(
+        date=datetime(2025, 12, 15, 10, 0, 0),
+        subject=b"=?UTF-8?B?SGVsbG8gV29ybGQ=?=",
+        from_=(Address(b"Test", None, b"test", b"example.com"),),
+        sender=(Address(b"Test", None, b"test", b"example.com"),),
+        reply_to=(Address(b"Test", None, b"test", b"example.com"),),
+        to=(Address(b"Test", None, b"test", b"example.com"),),
+        cc=(),
+        bcc=(),
+        in_reply_to=b"",
+        message_id=b"<123@example.com>",
+    )
+
+    mock_imap_client.fetch.return_value = {
+        42: {
+            b"ENVELOPE": mock_envelope,
+            b"FLAGS": (b"\\Seen",),
+            b"RFC822.SIZE": 1024,
+            b"INTERNALDATE": datetime(2025, 12, 15, 10, 0, 0),
+        }
+    }
+
+    # Query messages
+    result = await adapter.query_messages("INBOX", Q.all(), limit=10)
+
+    # Subject should be decoded
+    assert len(result.messages) == 1
+    assert result.messages[0].subject == "Hello World"
+
+
+@pytest.mark.asyncio
+async def test_parse_mime_encoded_subject_multipart(adapter, mock_imap_client):
+    """Test that multi-part MIME-encoded subjects are decoded."""
+    # Mock SEARCH to return UID
+    mock_imap_client.search.return_value = [1]
+
+    # Real example from issue
+    encoded = (
+        b"=?UTF-8?B?W2NycmZwYS5jby56YV0gQ2xpZW50IGNvbmZpZ3VyYXRpb24gc2V0?= "
+        b"=?UTF-8?B?dGluZ3MgZm9yIOKAnGRlbG1lQGNycmZwYS5jby56YeKAnS4=?="
+    )
+
+    mock_envelope = Envelope(
+        date=datetime(2025, 12, 15, 10, 0, 0),
+        subject=encoded,
+        from_=(Address(b"cPanel", None, b"cpanel", b"crrfpa.co.za"),),
+        sender=(Address(b"cPanel", None, b"cpanel", b"crrfpa.co.za"),),
+        reply_to=(Address(b"cPanel", None, b"cpanel", b"crrfpa.co.za"),),
+        to=(Address(b"Test", None, b"test", b"example.com"),),
+        cc=(),
+        bcc=(),
+        in_reply_to=b"",
+        message_id=b"<123@example.com>",
+    )
+
+    mock_imap_client.fetch.return_value = {
+        1: {
+            b"ENVELOPE": mock_envelope,
+            b"FLAGS": (),
+            b"RFC822.SIZE": 1024,
+            b"INTERNALDATE": datetime(2025, 12, 15, 10, 0, 0),
+        }
+    }
+
+    # Query messages
+    result = await adapter.query_messages("INBOX", Q.all(), limit=10)
+
+    # Subject should be fully decoded
+    # Note: The encoded subject contains Unicode quotes (U+201C and U+201D)
+    expected = "[crrfpa.co.za] Client configuration settings for \u201cdelme@crrfpa.co.za\u201d."
+    assert len(result.messages) == 1
+    assert result.messages[0].subject == expected
+
+
+@pytest.mark.asyncio
+async def test_parse_mime_encoded_subject_quoted_printable(adapter, mock_imap_client):
+    """Test that Quoted-printable MIME-encoded subjects are decoded."""
+    # Mock SEARCH to return UID
+    mock_imap_client.search.return_value = [42]
+
+    # =?UTF-8?Q?Jos=C3=A9?= → "José"
+    mock_envelope = Envelope(
+        date=datetime(2025, 12, 15, 10, 0, 0),
+        subject=b"=?UTF-8?Q?Jos=C3=A9?=",
+        from_=(Address(b"Test", None, b"test", b"example.com"),),
+        sender=(Address(b"Test", None, b"test", b"example.com"),),
+        reply_to=(Address(b"Test", None, b"test", b"example.com"),),
+        to=(Address(b"Test", None, b"test", b"example.com"),),
+        cc=(),
+        bcc=(),
+        in_reply_to=b"",
+        message_id=b"<123@example.com>",
+    )
+
+    mock_imap_client.fetch.return_value = {
+        42: {
+            b"ENVELOPE": mock_envelope,
+            b"FLAGS": (),
+            b"RFC822.SIZE": 1024,
+            b"INTERNALDATE": datetime(2025, 12, 15, 10, 0, 0),
+        }
+    }
+
+    # Query messages
+    result = await adapter.query_messages("INBOX", Q.all(), limit=10)
+
+    # Subject should be decoded
+    assert len(result.messages) == 1
+    assert result.messages[0].subject == "José"
+
+
+@pytest.mark.asyncio
+async def test_parse_plain_ascii_subject_unchanged(adapter, mock_imap_client):
+    """Test that plain ASCII subjects are unchanged."""
+    # Mock SEARCH to return UID
+    mock_imap_client.search.return_value = [42]
+
+    mock_envelope = Envelope(
+        date=datetime(2025, 12, 15, 10, 0, 0),
+        subject=b"Hello World",
+        from_=(Address(b"Test", None, b"test", b"example.com"),),
+        sender=(Address(b"Test", None, b"test", b"example.com"),),
+        reply_to=(Address(b"Test", None, b"test", b"example.com"),),
+        to=(Address(b"Test", None, b"test", b"example.com"),),
+        cc=(),
+        bcc=(),
+        in_reply_to=b"",
+        message_id=b"<123@example.com>",
+    )
+
+    mock_imap_client.fetch.return_value = {
+        42: {
+            b"ENVELOPE": mock_envelope,
+            b"FLAGS": (),
+            b"RFC822.SIZE": 1024,
+            b"INTERNALDATE": datetime(2025, 12, 15, 10, 0, 0),
+        }
+    }
+
+    # Query messages
+    result = await adapter.query_messages("INBOX", Q.all(), limit=10)
+
+    # Plain ASCII should work as before
+    assert len(result.messages) == 1
+    assert result.messages[0].subject == "Hello World"
+
+
+@pytest.mark.asyncio
+async def test_parse_mime_encoded_display_name(adapter, mock_imap_client):
+    """Test that MIME-encoded display names are decoded."""
+    # Mock SEARCH to return UID
+    mock_imap_client.search.return_value = [42]
+
+    # Display name with non-ASCII: "José García"
+    encoded_name = b"=?UTF-8?Q?Jos=C3=A9_Garc=C3=ADa?="
+
+    mock_envelope = Envelope(
+        date=datetime(2025, 12, 15, 10, 0, 0),
+        subject=b"Test",
+        from_=(Address(encoded_name, None, b"jose", b"example.com"),),
+        sender=(Address(encoded_name, None, b"jose", b"example.com"),),
+        reply_to=(Address(encoded_name, None, b"jose", b"example.com"),),
+        to=(Address(b"Test", None, b"test", b"example.com"),),
+        cc=(),
+        bcc=(),
+        in_reply_to=b"",
+        message_id=b"<123@example.com>",
+    )
+
+    mock_imap_client.fetch.return_value = {
+        42: {
+            b"ENVELOPE": mock_envelope,
+            b"FLAGS": (),
+            b"RFC822.SIZE": 1024,
+            b"INTERNALDATE": datetime(2025, 12, 15, 10, 0, 0),
+        }
+    }
+
+    # Query messages
+    result = await adapter.query_messages("INBOX", Q.all(), limit=10)
+
+    # Display name should be decoded
+    assert len(result.messages) == 1
+    assert result.messages[0].from_.name == "José García"
+
+
+@pytest.mark.asyncio
+async def test_parse_empty_subject(adapter, mock_imap_client):
+    """Test that empty/None subject returns empty string."""
+    # Mock SEARCH to return UID
+    mock_imap_client.search.return_value = [42]
+
+    mock_envelope = Envelope(
+        date=datetime(2025, 12, 15, 10, 0, 0),
+        subject=None,  # Empty subject
+        from_=(Address(b"Test", None, b"test", b"example.com"),),
+        sender=(Address(b"Test", None, b"test", b"example.com"),),
+        reply_to=(Address(b"Test", None, b"test", b"example.com"),),
+        to=(Address(b"Test", None, b"test", b"example.com"),),
+        cc=(),
+        bcc=(),
+        in_reply_to=b"",
+        message_id=b"<123@example.com>",
+    )
+
+    mock_imap_client.fetch.return_value = {
+        42: {
+            b"ENVELOPE": mock_envelope,
+            b"FLAGS": (),
+            b"RFC822.SIZE": 1024,
+            b"INTERNALDATE": datetime(2025, 12, 15, 10, 0, 0),
+        }
+    }
+
+    # Query messages
+    result = await adapter.query_messages("INBOX", Q.all(), limit=10)
+
+    # Empty subject should return empty string
+    assert len(result.messages) == 1
+    assert result.messages[0].subject == ""
+
+
+@pytest.mark.asyncio
+async def test_parse_mixed_encoded_and_plain_parts(adapter, mock_imap_client):
+    """Test that mixed encoded and plain text parts are decoded correctly."""
+    # Mock SEARCH to return UID
+    mock_imap_client.search.return_value = [42]
+
+    # Mixed: plain text + encoded part
+    # "Hello =?UTF-8?B?V29ybGQ=?=" → "Hello World"
+    mixed_subject = b"Hello =?UTF-8?B?V29ybGQ=?="
+
+    mock_envelope = Envelope(
+        date=datetime(2025, 12, 15, 10, 0, 0),
+        subject=mixed_subject,
+        from_=(Address(b"Test", None, b"test", b"example.com"),),
+        sender=(Address(b"Test", None, b"test", b"example.com"),),
+        reply_to=(Address(b"Test", None, b"test", b"example.com"),),
+        to=(Address(b"Test", None, b"test", b"example.com"),),
+        cc=(),
+        bcc=(),
+        in_reply_to=b"",
+        message_id=b"<123@example.com>",
+    )
+
+    mock_imap_client.fetch.return_value = {
+        42: {
+            b"ENVELOPE": mock_envelope,
+            b"FLAGS": (),
+            b"RFC822.SIZE": 1024,
+            b"INTERNALDATE": datetime(2025, 12, 15, 10, 0, 0),
+        }
+    }
+
+    # Query messages
+    result = await adapter.query_messages("INBOX", Q.all(), limit=10)
+
+    # Mixed parts should be decoded correctly
+    assert len(result.messages) == 1
+    assert result.messages[0].subject == "Hello World"
+
+
+@pytest.mark.asyncio
+async def test_parse_malformed_mime_header_graceful_fallback(adapter, mock_imap_client):
+    """Test that malformed MIME headers fall back gracefully."""
+    # Mock SEARCH to return UID
+    mock_imap_client.search.return_value = [42]
+
+    # Malformed MIME header (missing closing ?=)
+    malformed = b"=?UTF-8?B?SGVsbG8="
+
+    mock_envelope = Envelope(
+        date=datetime(2025, 12, 15, 10, 0, 0),
+        subject=malformed,
+        from_=(Address(b"Test", None, b"test", b"example.com"),),
+        sender=(Address(b"Test", None, b"test", b"example.com"),),
+        reply_to=(Address(b"Test", None, b"test", b"example.com"),),
+        to=(Address(b"Test", None, b"test", b"example.com"),),
+        cc=(),
+        bcc=(),
+        in_reply_to=b"",
+        message_id=b"<123@example.com>",
+    )
+
+    mock_imap_client.fetch.return_value = {
+        42: {
+            b"ENVELOPE": mock_envelope,
+            b"FLAGS": (),
+            b"RFC822.SIZE": 1024,
+            b"INTERNALDATE": datetime(2025, 12, 15, 10, 0, 0),
+        }
+    }
+
+    # Query messages
+    result = await adapter.query_messages("INBOX", Q.all(), limit=10)
+
+    # Should not crash, should return raw string
+    assert len(result.messages) == 1
+    # Fallback should decode as UTF-8
+    assert "UTF-8" in result.messages[0].subject or "SGVsbG8" in result.messages[0].subject

@@ -258,3 +258,38 @@ async def test_e2e_get_folder_status_greenmail(greenmail_adapter):
     assert status.message_count >= 0
     assert status.unseen_count >= 0
     assert status.uidnext > 0
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_e2e_mime_encoded_subject_greenmail(greenmail_adapter):
+    """Test that MIME-encoded subjects are decoded from real IMAP."""
+    # Send email with non-ASCII subject via SMTP
+    msg = MIMEMultipart()
+    msg["From"] = GREENMAIL_USER
+    msg["To"] = GREENMAIL_USER
+    msg["Subject"] = "Test: 你好世界 (Hello World in Chinese)"
+    msg.attach(MIMEText("Body with international characters", "plain"))
+
+    smtp = smtplib.SMTP(GREENMAIL_HOST, GREENMAIL_SMTP_PORT)
+    smtp.sendmail(GREENMAIL_USER, [GREENMAIL_USER], msg.as_string())
+    smtp.quit()
+
+    # Wait for delivery
+    await asyncio.sleep(0.5)
+
+    # Query messages
+    result = await greenmail_adapter.query_messages("INBOX", Q.all(), limit=10)
+    assert len(result.messages) > 0
+
+    # Find the message we just sent
+    message = None
+    for msg in result.messages:
+        if "你好世界" in msg.subject:
+            message = msg
+            break
+
+    # Subject should be decoded (not MIME-encoded)
+    assert message is not None, "Could not find sent message with Chinese characters"
+    assert "你好世界" in message.subject
+    assert "=?UTF-8?" not in message.subject

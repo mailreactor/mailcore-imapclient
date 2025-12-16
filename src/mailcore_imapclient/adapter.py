@@ -10,6 +10,7 @@ base64-encoded bytes).
 import asyncio
 import base64
 from concurrent.futures import ThreadPoolExecutor
+from email.header import decode_header
 from functools import partial
 from typing import Any
 
@@ -297,7 +298,7 @@ class IMAPClientAdapter(IMAPConnection):
 
         # Extract metadata
         message_id = envelope.message_id.decode() if envelope.message_id else f"<{uid}@{folder}>"
-        subject = envelope.subject.decode("utf-8", errors="replace") if envelope.subject else ""
+        subject = self._decode_mime_header(envelope.subject)
         date = raw[b"INTERNALDATE"]
         size = raw[b"RFC822.SIZE"]
         in_reply_to = envelope.in_reply_to.decode() if envelope.in_reply_to else None
@@ -323,6 +324,44 @@ class IMAPClientAdapter(IMAPConnection):
             attachments=attachments or None,
         )
 
+    def _decode_mime_header(self, header_bytes: bytes | None) -> str:
+        """Decode MIME-encoded email header (RFC 2047).
+
+        Handles encoded words like =?UTF-8?B?...?= (Base64) and =?UTF-8?Q?...?= (Quoted-printable).
+        Gracefully handles malformed MIME headers by falling back to raw string.
+
+        Args:
+            header_bytes: Raw header bytes from IMAP ENVELOPE
+
+        Returns:
+            Decoded string
+
+        Example:
+            >>> _decode_mime_header(b'=?UTF-8?B?SGVsbG8gV29ybGQ=?=')
+            'Hello World'
+        """
+        if not header_bytes:
+            return ""
+
+        try:
+            # decode_header returns list of (bytes, charset) tuples
+            decoded_parts = decode_header(header_bytes.decode("utf-8", errors="replace"))
+
+            # Combine parts, decoding each with its specified charset
+            result_parts = []
+            for content, charset in decoded_parts:
+                if isinstance(content, bytes):
+                    # Decode bytes using specified charset (or UTF-8 default)
+                    result_parts.append(content.decode(charset or "utf-8", errors="replace"))
+                else:
+                    # Already a string
+                    result_parts.append(content)
+
+            return "".join(result_parts)
+        except Exception:
+            # Malformed MIME headers - fall back to raw string decoding
+            return header_bytes.decode("utf-8", errors="replace")
+
     def _parse_envelope_address(self, addr: Any) -> EmailAddress:
         """Parse IMAP ENVELOPE address into EmailAddress domain object.
 
@@ -334,7 +373,7 @@ class IMAPClientAdapter(IMAPConnection):
         """
         # ENVELOPE address format: (name, route, mailbox, host)
         # Example: (b'John Doe', None, b'john', b'example.com')
-        name = addr.name.decode("utf-8", errors="replace") if addr.name else None
+        name = self._decode_mime_header(addr.name) if addr.name else None
         mailbox = addr.mailbox.decode("utf-8", errors="replace") if addr.mailbox else ""
         host = addr.host.decode("utf-8", errors="replace") if addr.host else ""
         email = f"{mailbox}@{host}"
