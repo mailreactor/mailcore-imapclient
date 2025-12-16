@@ -39,24 +39,6 @@ GREENMAIL_USER = "test@test.com"
 GREENMAIL_PASSWORD = "test"  # pragma: allowlist secret
 
 
-def has_flag(flags: list[str] | set[MessageFlag], flag: MessageFlag) -> bool:
-    """Check if flags collection contains MessageFlag value.
-
-    Two contracts in mailcore:
-    1. Message.flags property → list[str] (Story 3.4)
-    2. IMAPConnection.update_message_flags() → tuple[set[MessageFlag], set[str]] (Story 3.2)
-
-    Both contracts are correct - different use cases.
-    This helper handles both for conformance test assertions.
-    """
-    if isinstance(flags, set):
-        # update_message_flags() return value
-        return flag in flags
-    else:
-        # Message.flags property value
-        return flag.value in flags
-
-
 @pytest.fixture(params=["mock", "greenmail"])
 async def imap_connection(request):
     """Dual-target fixture: provides either MockIMAPConnection or IMAPClientAdapter+Greenmail.
@@ -172,7 +154,7 @@ async def test_conformance_query_unseen_messages(imap_connection):
     # Should return exactly 1 message (the unseen one)
     assert len(unseen_result.messages) == 1
     assert unseen_result.messages[0].subject == "Unseen Test Unseen"
-    assert not has_flag(unseen_result.messages[0].flags, MessageFlag.SEEN)
+    assert MessageFlag.SEEN not in unseen_result.messages[0].flags
 
 
 @pytest.mark.conformance
@@ -231,7 +213,7 @@ async def test_conformance_query_seen_messages(imap_connection):
     # Should return at least 1 message (may have more from previous test runs in Greenmail)
     assert len(seen_result.messages) >= 1
     # Check flags - Message.flags is list[str] per contract
-    assert has_flag(seen_result.messages[0].flags, MessageFlag.SEEN)
+    assert MessageFlag.SEEN in seen_result.messages[0].flags
 
 
 @pytest.mark.conformance
@@ -260,7 +242,7 @@ async def test_conformance_query_flagged_messages(imap_connection):
     assert len(flagged_result.messages) >= 2
     # Check flags - Message.flags is list[str] per contract
     for msg in flagged_result.messages:
-        assert has_flag(msg.flags, MessageFlag.FLAGGED)
+        assert MessageFlag.FLAGGED in msg.flags
 
 
 # ============================================================================
@@ -350,7 +332,7 @@ async def test_conformance_add_seen_flag(imap_connection):
     uid = msgs.messages[0].uid
 
     # Verify initially unseen
-    assert not has_flag(msgs.messages[0].flags, MessageFlag.SEEN)
+    assert MessageFlag.SEEN not in msgs.messages[0].flags
 
     # Add SEEN flag
     updated_flags, _ = await imap_connection.update_message_flags(
@@ -358,11 +340,11 @@ async def test_conformance_add_seen_flag(imap_connection):
     )
 
     # Verify flag added
-    assert has_flag(updated_flags, MessageFlag.SEEN)
+    assert MessageFlag.SEEN in updated_flags
 
     # Re-query to confirm persistence
     msgs_after = await imap_connection.query_messages("INBOX", Q.subject("Add Seen Flag Test"), limit=1)
-    assert has_flag(msgs_after.messages[0].flags, MessageFlag.SEEN)
+    assert MessageFlag.SEEN in msgs_after.messages[0].flags
 
 
 @pytest.mark.conformance
@@ -381,7 +363,7 @@ async def test_conformance_remove_flagged_flag(imap_connection):
 
     # Verify flag added
     msgs_after_add = await imap_connection.query_messages("INBOX", Q.subject("Remove Flagged Test"), limit=1)
-    assert has_flag(msgs_after_add.messages[0].flags, MessageFlag.FLAGGED)
+    assert MessageFlag.FLAGGED in msgs_after_add.messages[0].flags
 
     # Remove FLAGGED flag
     updated_flags, _ = await imap_connection.update_message_flags(
@@ -389,11 +371,11 @@ async def test_conformance_remove_flagged_flag(imap_connection):
     )
 
     # Verify flag removed
-    assert not has_flag(updated_flags, MessageFlag.FLAGGED)
+    assert MessageFlag.FLAGGED not in updated_flags
 
     # Re-query to confirm persistence
     msgs_final = await imap_connection.query_messages("INBOX", Q.subject("Remove Flagged Test"), limit=1)
-    assert not has_flag(msgs_final.messages[0].flags, MessageFlag.FLAGGED)
+    assert MessageFlag.FLAGGED not in msgs_final.messages[0].flags
 
 
 @pytest.mark.conformance
@@ -416,15 +398,15 @@ async def test_conformance_add_multiple_flags(imap_connection):
     )
 
     # Verify all flags added
-    assert has_flag(updated_flags, MessageFlag.SEEN)
-    assert has_flag(updated_flags, MessageFlag.FLAGGED)
-    assert has_flag(updated_flags, MessageFlag.ANSWERED)
+    assert MessageFlag.SEEN in updated_flags
+    assert MessageFlag.FLAGGED in updated_flags
+    assert MessageFlag.ANSWERED in updated_flags
 
     # Re-query to confirm persistence
     msgs_after = await imap_connection.query_messages("INBOX", Q.subject("Multiple Flags Test"), limit=1)
-    assert has_flag(msgs_after.messages[0].flags, MessageFlag.SEEN)
-    assert has_flag(msgs_after.messages[0].flags, MessageFlag.FLAGGED)
-    assert has_flag(msgs_after.messages[0].flags, MessageFlag.ANSWERED)
+    assert MessageFlag.SEEN in msgs_after.messages[0].flags
+    assert MessageFlag.FLAGGED in msgs_after.messages[0].flags
+    assert MessageFlag.ANSWERED in msgs_after.messages[0].flags
 
 
 @pytest.mark.conformance
@@ -444,7 +426,7 @@ async def test_conformance_flag_persistence_across_queries(imap_connection):
     # Query multiple times - flag should persist
     for _ in range(3):
         msgs_check = await imap_connection.query_messages("INBOX", Q.subject("Flag Persist Test"), limit=1)
-        assert has_flag(msgs_check.messages[0].flags, MessageFlag.SEEN)
+        assert MessageFlag.SEEN in msgs_check.messages[0].flags
 
 
 # ============================================================================

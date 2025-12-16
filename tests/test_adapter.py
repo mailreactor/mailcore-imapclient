@@ -433,18 +433,20 @@ async def test_parse_envelope_creates_email_addresses(adapter):
 
 
 @pytest.mark.asyncio
-async def test_parse_flags_converts_to_strings(adapter):
-    """Test that _parse_flags converts IMAP flags to strings."""
-    # Mock FLAGS
+async def test_parse_flags_separates_standard_and_custom(adapter):
+    """Test that _parse_flags separates standard flags from custom flags."""
+    # Mock FLAGS with standard and custom flags
     flags = (b"\\Seen", b"\\Flagged", b"CustomFlag")
 
     # Parse flags
-    parsed = adapter._parse_flags(flags)
+    standard_flags, custom_flags = adapter._parse_flags(flags)
 
-    # Verify flags converted
-    assert "\\Seen" in parsed
-    assert "\\Flagged" in parsed
-    assert "CustomFlag" in parsed
+    # Verify standard flags converted to MessageFlag enum
+    assert MessageFlag.SEEN in standard_flags
+    assert MessageFlag.FLAGGED in standard_flags
+
+    # Verify custom flags kept as strings
+    assert "CustomFlag" in custom_flags
 
 
 @pytest.mark.asyncio
@@ -454,15 +456,6 @@ async def test_flag_to_imap_conversion(adapter):
     assert adapter._flag_to_imap(MessageFlag.SEEN) == "\\Seen"
     assert adapter._flag_to_imap(MessageFlag.FLAGGED) == "\\Flagged"
     assert adapter._flag_to_imap(MessageFlag.ANSWERED) == "\\Answered"
-
-
-@pytest.mark.asyncio
-async def test_imap_to_flag_conversion(adapter):
-    """Test that _imap_to_flag converts IMAP string to MessageFlag."""
-    # Convert flags
-    assert adapter._imap_to_flag("\\Seen") == MessageFlag.SEEN
-    assert adapter._imap_to_flag("\\Flagged") == MessageFlag.FLAGGED
-    assert adapter._imap_to_flag("\\Answered") == MessageFlag.ANSWERED
 
 
 @pytest.mark.asyncio

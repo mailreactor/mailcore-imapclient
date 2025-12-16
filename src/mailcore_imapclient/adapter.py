@@ -283,7 +283,7 @@ class IMAPClientAdapter(IMAPConnection):
         cc_addrs = [self._parse_envelope_address(addr) for addr in envelope.cc] if envelope.cc else []
 
         # Parse FLAGS
-        flags = self._parse_flags(raw[b"FLAGS"])
+        flags, custom_flags = self._parse_flags(raw[b"FLAGS"])
 
         # Parse BODYSTRUCTURE → Attachments (if requested)
         attachments: list[Attachment] = []
@@ -316,6 +316,7 @@ class IMAPClientAdapter(IMAPConnection):
             subject=subject,
             date=date,
             flags=flags,
+            custom_flags=custom_flags,
             size=size,
             in_reply_to=in_reply_to,
             references=references,
@@ -340,18 +341,32 @@ class IMAPClientAdapter(IMAPConnection):
 
         return EmailAddress(email=email, name=name)
 
-    def _parse_flags(self, flags: tuple[bytes, ...]) -> list[str]:
-        """Parse IMAP FLAGS into list of flag strings.
+    def _parse_flags(self, flags: tuple[bytes, ...]) -> tuple[set[MessageFlag], set[str]]:
+        """Parse IMAP FLAGS into (standard flags, custom flags).
+
+        Standard flags (\\Seen, \\Flagged, etc.) → MessageFlag enum
+        Custom flags ($Forwarded, $MDNSent, etc.) → strings
 
         Args:
-            flags: IMAP FLAGS tuple (b'\\Seen', b'\\Flagged', etc.)
+            flags: IMAP FLAGS tuple (b'\\Seen', b'\\Flagged', b'$Forwarded', etc.)
 
         Returns:
-            List of flag strings (without backslash prefix)
+            Tuple of (standard_flags, custom_flags)
         """
-        # IMAP flags: (b'\\Seen', b'\\Flagged', b'\\Answered', ...)
-        # Convert to list of strings: ['\\Seen', '\\Flagged', ...]
-        return [flag.decode() for flag in flags]
+        standard_flags: set[MessageFlag] = set()
+        custom_flags: set[str] = set()
+
+        for flag in flags:
+            flag_str = flag.decode()
+            # Use domain method to convert IMAP string to MessageFlag enum
+            message_flag = MessageFlag.from_imap(flag_str)
+            if message_flag is not None:
+                standard_flags.add(message_flag)
+            else:
+                # Custom flag (e.g., $Forwarded, $MDNSent)
+                custom_flags.add(flag_str)
+
+        return (standard_flags, custom_flags)
 
     def _parse_bodystructure(
         self, bodystructure: Any, folder: str, uid: int, resolver: IMAPResolver
@@ -518,11 +533,11 @@ class IMAPClientAdapter(IMAPConnection):
 
         for flag_bytes in updated_flags_raw:
             flag_str = flag_bytes.decode()
-            try:
-                # Try to parse as standard MessageFlag
-                standard_flag = self._imap_to_flag(flag_str)
+            # Use domain method to convert IMAP string to MessageFlag enum
+            standard_flag = MessageFlag.from_imap(flag_str)
+            if standard_flag is not None:
                 standard_flags.add(standard_flag)
-            except ValueError:
+            else:
                 # Not a standard flag - treat as custom
                 custom_flags.add(flag_str)
 
@@ -540,22 +555,6 @@ class IMAPClientAdapter(IMAPConnection):
         # MessageFlag.value already contains the IMAP flag string with backslash
         value: str = flag.value  # Explicit type annotation for mypy
         return value
-
-    def _imap_to_flag(self, imap_flag: str) -> MessageFlag:
-        """Convert IMAP flag string to MessageFlag enum.
-
-        Args:
-            imap_flag: IMAP flag string (e.g., '\\Seen', '\\Flagged')
-
-        Returns:
-            MessageFlag enum value
-
-        Raises:
-            ValueError: If flag is not a standard IMAP flag
-        """
-        # Remove leading backslash and convert to uppercase
-        flag_name = imap_flag.lstrip("\\").upper()
-        return MessageFlag[flag_name]
 
     async def move_message(self, uid: int, from_folder: str, to_folder: str) -> int:
         """Move message between folders.
