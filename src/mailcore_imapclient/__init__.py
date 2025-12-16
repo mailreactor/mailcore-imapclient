@@ -1,7 +1,7 @@
 """mailcore-imapclient - IMAPClient adapter for mailcore."""
 
+from mailcore_imapclient.adapter import IMAPClientAdapter
+
 __version__ = "0.1.0"
 
-# Exports will be populated in Story 3.11
-# from .adapter import IMAPClientAdapter
-# __all__ = ["IMAPClientAdapter"]
+__all__ = ["IMAPClientAdapter", "__version__"]

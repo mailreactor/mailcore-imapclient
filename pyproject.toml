@@ -26,6 +26,7 @@ dev = [
     "ruff>=0.1.0",
     "pre-commit",
     "detect-secrets",
+    "requests>=2.31.0",
 ]
 
 [tool.ruff]
@@ -50,3 +51,7 @@ packages = ["src/mailcore_imapclient"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "e2e: E2E tests against Greenmail IMAP server",
+    "conformance: Conformance tests validating mock vs Greenmail behavior",
+]

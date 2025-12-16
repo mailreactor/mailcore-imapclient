@@ -12,14 +12,14 @@ repos:
       - id: ruff-format
         name: ruff formatting
 
-  # Mypy - Static type checking
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.18.2
-    hooks:
-      - id: mypy
-        name: mypy type checking
-        args: [--ignore-missing-imports]
-        exclude: ^tests/  # Skip type checking for tests
+  # Mypy - Static type checking (disabled - use local hook instead due to editable mailcore dependency)
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.18.2
+  #   hooks:
+  #     - id: mypy
+  #       name: mypy type checking
+  #       args: [--ignore-missing-imports]
+  #       exclude: ^tests/  # Skip type checking for tests
 
   # Detect-secrets - Prevent committing secrets
   - repo: https://github.com/Yelp/detect-secrets
@@ -33,6 +33,15 @@ repos:
   # Local hooks - Run project-specific tools
   - repo: local
     hooks:
+      - id: mypy-local
+        name: mypy type checking (local venv)
+        entry: bash -c '.venv/bin/mypy --strict src/'
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       - id: no-future-annotations
         name: prevent from __future__ import annotations
         entry: bash -c 'if grep -r "from __future__ import annotations" src/ tests/; then echo "ERROR - Do not use from __future__ import annotations (Python 3.10+ has native support)"; exit 1; fi'
