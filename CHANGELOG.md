@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Folder cache corruption on SELECT failure** (Story 3.11.3)
+  - `_select_folder()` now invalidates cache when IMAP SELECT command fails
+  - Prevents stale cache state causing "No mailbox selected" errors on subsequent operations
+  - Failed SELECT on non-existent folder no longer corrupts adapter state
+  - One bad folder access no longer breaks all subsequent folder operations
+
+### Changed - BREAKING
+
+- **IMAPClientAdapter now raises FolderNotFoundError for missing folders** (Story 3.11.3)
+  - When IMAP SELECT fails with "nonexistent namespace", "does not exist", or "no such mailbox" errors, adapter wraps in `mailcore.FolderNotFoundError`
+  - Exception includes clear error message: `"Folder '{folder}' does not exist"`
+  - Original IMAP exception preserved in exception chain (accessible via `__cause__`)
+  - **Breaking Change**: Code catching generic `Exception` for folder operations should catch `FolderNotFoundError` instead
+  - Example:
+    ```python
+    from mailcore import FolderNotFoundError
+    
+    try:
+        messages = await mailbox.folders["NONEXISTENT"].list()
+    except FolderNotFoundError as e:
+        print(f"Folder not found: {e.folder}")
+    ```
+
 ### Changed - BREAKING
 
 - **IMAPClientAdapter._parse_flags() signature changed** (Story 3.11.1)

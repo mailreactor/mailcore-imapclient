@@ -293,3 +293,33 @@ async def test_e2e_mime_encoded_subject_greenmail(greenmail_adapter):
     assert message is not None, "Could not find sent message with Chinese characters"
     assert "你好世界" in message.subject
     assert "=?UTF-8?" not in message.subject
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_folder_operations_after_select_failure(greenmail_adapter):
+    """Test that subsequent folder operations work after SELECT failure.
+
+    Validates bug fix: Failed SELECT on non-existent folder should not
+    corrupt cache state and break subsequent valid folder operations.
+    """
+    # Step 1: Access INBOX (valid folder) - should work
+    result1 = await greenmail_adapter.query_messages("INBOX", Q.all(), limit=10)
+    count1 = result1.total_in_folder
+    assert count1 >= 0  # Should succeed
+
+    # Step 2: Access non-existent folder - should raise exception
+    from mailcore import FolderNotFoundError
+
+    with pytest.raises(FolderNotFoundError) as exc_info:
+        await greenmail_adapter.query_messages("NONEXISTENT", Q.all(), limit=10)
+
+    # Verify domain exception with clear message
+    assert exc_info.value.folder == "NONEXISTENT"
+    assert "does not exist" in str(exc_info.value)
+
+    # Step 3: Access INBOX again - MUST work (validates bug fix)
+    result2 = await greenmail_adapter.query_messages("INBOX", Q.all(), limit=10)
+    count2 = result2.total_in_folder
+    assert count2 >= 0  # Should succeed, not raise "No mailbox selected"
+    assert count2 == count1  # Count should be same (no messages added/removed)

@@ -18,6 +18,7 @@ from imapclient import IMAPClient  # type: ignore[import-untyped]
 from mailcore import (
     Attachment,
     EmailAddress,
+    FolderNotFoundError,
     Message,
     MessageFlag,
     MessageList,
@@ -142,12 +143,31 @@ class IMAPClientAdapter(IMAPConnection):
         Args:
             folder: Folder name to select
             readonly: Select in read-only mode (default: True)
+
+        Raises:
+            FolderNotFoundError: If folder doesn't exist
         """
         # Re-select if folder changed OR readonly mode changed
         if self._selected_folder != folder or self._selected_folder_readonly != readonly:
-            await self._run_sync(self._client.select_folder, folder, readonly=readonly)
-            self._selected_folder = folder
-            self._selected_folder_readonly = readonly
+            try:
+                await self._run_sync(self._client.select_folder, folder, readonly=readonly)
+                # Only update cache if SELECT succeeded
+                self._selected_folder = folder
+                self._selected_folder_readonly = readonly
+            except Exception as e:
+                # Invalidate cache on failure to prevent stale state
+                self._selected_folder = None
+                self._selected_folder_readonly = True
+
+                # Wrap folder not found errors in domain exception
+                error_msg = str(e).lower()
+                if (
+                    "nonexistent namespace" in error_msg
+                    or "does not exist" in error_msg
+                    or "no such mailbox" in error_msg
+                ):
+                    raise FolderNotFoundError(folder) from e
+                raise  # Re-raise other exceptions as-is
 
     async def query_messages(
         self,

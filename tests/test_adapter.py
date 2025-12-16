@@ -825,3 +825,35 @@ async def test_parse_malformed_mime_header_graceful_fallback(adapter, mock_imap_
     assert len(result.messages) == 1
     # Fallback should decode as UTF-8
     assert "UTF-8" in result.messages[0].subject or "SGVsbG8" in result.messages[0].subject
+
+
+@pytest.mark.asyncio
+async def test_select_folder_invalidates_cache_on_failure(adapter, mock_imap_client):
+    """Test that folder cache is invalidated when SELECT fails."""
+    # Step 1: Select valid folder (cache populated)
+    mock_imap_client.select_folder.return_value = {
+        b"EXISTS": 2,
+        b"UNSEEN": 0,
+        b"UIDNEXT": 3,
+    }
+    await adapter._select_folder("INBOX")
+    assert adapter._selected_folder == "INBOX"
+    assert adapter._selected_folder_readonly is True
+
+    # Step 2: Select invalid folder (should invalidate cache)
+    mock_imap_client.select_folder.side_effect = Exception(
+        "select failed: Client tried to access nonexistent namespace"
+    )
+
+    from mailcore import FolderNotFoundError
+
+    with pytest.raises(FolderNotFoundError) as exc_info:
+        await adapter._select_folder("NONEXISTENT")
+
+    # Verify domain exception raised with correct message
+    assert exc_info.value.folder == "NONEXISTENT"
+    assert "does not exist" in str(exc_info.value)
+
+    # Cache should be invalidated
+    assert adapter._selected_folder is None
+    assert adapter._selected_folder_readonly is True
