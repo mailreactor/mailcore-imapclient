@@ -1,7 +1,10 @@
 """IMAPClient adapter implementing mailcore IMAPConnection ABC.
 
 Wraps synchronous IMAPClient library with ThreadPoolExecutor pattern for async compatibility.
-Translates IMAP protocol responses to mailcore domain objects (Message, MessageList, etc.).
+Translates IMAP protocol responses to mailcore DTOs (MessageData, MessageListData).
+
+Story 3.21: Returns DTOs (pure data) instead of entities (with behavior).
+Folder converts DTOs to Message entities with connections injected.
 
 CRITICAL: Base64 decodes attachment content (validated in Story 3.0 - IMAPClient returns
 base64-encoded bytes).
@@ -19,9 +22,9 @@ from mailcore import (
     Attachment,
     EmailAddress,
     FolderNotFoundError,
-    Message,
+    MessageData,
     MessageFlag,
-    MessageList,
+    MessageListData,
     Query,
 )
 from mailcore.attachment import IMAPResolver
@@ -177,7 +180,7 @@ class IMAPClientAdapter(IMAPConnection):
         include_attachment_metadata: bool = True,
         limit: int | None = None,
         offset: int = 0,
-    ) -> MessageList:
+    ) -> MessageListData:
         """Query messages from folder matching criteria.
 
         Combines IMAP operations:
@@ -187,9 +190,9 @@ class IMAPClientAdapter(IMAPConnection):
         4. Conditionally FETCH BODY[TEXT], BODY[1.HTML] if include_body=True
         5. Conditionally parse BODYSTRUCTURE if include_attachment_metadata=True
         6. Get folder STATUS for total_in_folder count
-        7. Create Message objects with imap=self, _smtp=None
+        7. Create MessageData DTOs (pure data, no connections)
         8. Create single IMAPResolver shared by all attachments
-        9. Return MessageList with pagination metadata
+        9. Return MessageListData with pagination metadata
 
         Args:
             folder: Folder name
@@ -200,7 +203,7 @@ class IMAPClientAdapter(IMAPConnection):
             offset: Skip first N messages (default: 0)
 
         Returns:
-            MessageList with messages, total_matches, total_in_folder, folder
+            MessageListData with MessageData DTOs, total_matches, total_in_folder, folder
         """
         # SELECT folder (cached)
         await self._select_folder(folder, readonly=True)
@@ -224,7 +227,7 @@ class IMAPClientAdapter(IMAPConnection):
 
         # Early return if pagination selected no messages (e.g., limit=0 for count())
         if not uids:
-            return MessageList(
+            return MessageListData(
                 messages=[],
                 total_matches=total_matches,
                 total_in_folder=status.message_count,
@@ -244,14 +247,14 @@ class IMAPClientAdapter(IMAPConnection):
         # Create single IMAPResolver for all attachments
         resolver = IMAPResolver(self)
 
-        # Parse messages
+        # Parse messages into DTOs
         messages = [
             self._parse_message(uid, raw_data[uid], folder, include_body, include_attachment_metadata, resolver)
             for uid in uids
             if uid in raw_data
         ]
 
-        return MessageList(
+        return MessageListData(
             messages=messages,
             total_matches=total_matches,
             total_in_folder=status.message_count,
@@ -266,15 +269,15 @@ class IMAPClientAdapter(IMAPConnection):
         include_body: bool,
         include_attachment_metadata: bool,
         resolver: IMAPResolver,
-    ) -> Message:
-        """Parse IMAP FETCH response into Message domain object.
+    ) -> MessageData:
+        """Parse IMAP FETCH response into MessageData DTO.
 
-        Creates Message with:
-        - imap=self (for lazy loading)
-        - _smtp=None (Folder injects SMTP later)
+        Creates MessageData DTO (pure data, no behavior) with:
         - Metadata from ENVELOPE, FLAGS, RFC822.SIZE, INTERNALDATE
         - Optional body_text, body_html from BODY[TEXT], BODY[1.HTML]
         - Optional attachments from BODYSTRUCTURE parsing
+
+        Folder will convert DTO to Message entity with connections.
 
         Args:
             uid: Message UID
@@ -285,7 +288,7 @@ class IMAPClientAdapter(IMAPConnection):
             resolver: IMAPResolver instance for attachments
 
         Returns:
-            Message domain object
+            MessageData DTO (pure data)
         """
 
         # Parse ENVELOPE → EmailAddress objects
@@ -325,9 +328,8 @@ class IMAPClientAdapter(IMAPConnection):
         # Note: ENVELOPE doesn't have references - fetch separately if needed
         references = None
 
-        # Create Message with imap=self, _smtp=None
-        return Message(
-            imap=self,
+        # Create MessageData DTO (pure data, no connections)
+        return MessageData(
             uid=uid,
             folder=folder,
             message_id=message_id,
@@ -340,8 +342,8 @@ class IMAPClientAdapter(IMAPConnection):
             custom_flags=custom_flags,
             size=size,
             in_reply_to=in_reply_to,
-            references=references,
-            attachments=attachments or None,
+            references=references or [],
+            attachments=attachments,
         )
 
     def _decode_mime_header(self, header_bytes: bytes | None) -> str:

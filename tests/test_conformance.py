@@ -694,10 +694,10 @@ async def test_conformance_message_list_metadata(imap_connection):
     # Query with limit=2
     result = await imap_connection.query_messages("INBOX", Q.all(), limit=2)
 
-    # Verify MessageList metadata
+    # Verify MessageListData metadata (Story 3.21 - returns DTOs)
     assert result.folder == "INBOX"
     assert result.total_matches >= 3
     assert result.total_in_folder >= 3
     assert len(result.messages) == 2
-    assert result.returned_count == 2
-    assert result.has_more is True
+    # MessageListData doesn't have returned_count/has_more - those are MessageList entity properties
+    # Adapter returns pure DTOs, Folder converts to entities with those computed properties
