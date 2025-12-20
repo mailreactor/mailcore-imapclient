@@ -198,13 +198,20 @@ async def test_query_messages_paginates_with_limit_offset(adapter, mock_imap_cli
 @pytest.mark.asyncio
 async def test_fetch_message_body_selects_folder(adapter, mock_imap_client):
     """Test that fetch_message_body selects folder before fetching."""
-    # Mock FETCH to return body
-    mock_imap_client.fetch.return_value = {
-        42: {
-            b"BODY[TEXT]": b"Hello World",
-            b"BODY[1.HTML]": b"<p>Hello World</p>",
-        }
-    }
+    # Mock BODYSTRUCTURE for multipart/alternative (text + HTML)
+    bodystructure = (
+        [
+            (b"TEXT", b"PLAIN", ("CHARSET", "UTF-8"), None, None, "7BIT", 11, 1),
+            (b"TEXT", b"HTML", ("CHARSET", "UTF-8"), None, None, "7BIT", 20, 1),
+        ],
+        b"ALTERNATIVE",
+    )
+
+    # Mock FETCH responses (two calls: BODYSTRUCTURE then BODY parts)
+    mock_imap_client.fetch.side_effect = [
+        {42: {b"BODYSTRUCTURE": bodystructure}},  # First call: BODYSTRUCTURE
+        {42: {b"BODY[1]": b"Hello World", b"BODY[2]": b"<p>Hello World</p>"}},  # Second call: body parts
+    ]
 
     # Fetch body
     text, html = await adapter.fetch_message_body("INBOX", 42)
@@ -212,12 +219,100 @@ async def test_fetch_message_body_selects_folder(adapter, mock_imap_client):
     # Verify SELECT was called
     mock_imap_client.select_folder.assert_called_with("INBOX", readonly=True)
 
-    # Verify FETCH was called with correct fields
-    mock_imap_client.fetch.assert_called_once_with([42], ["BODY[TEXT]", "BODY[1.HTML]"])
+    # Verify FETCH was called twice (BODYSTRUCTURE then body parts)
+    assert mock_imap_client.fetch.call_count == 2
+    mock_imap_client.fetch.assert_any_call([42], ["BODYSTRUCTURE"])
+    mock_imap_client.fetch.assert_any_call([42], ["BODY[1]", "BODY[2]"])
 
     # Verify body was decoded
     assert text == "Hello World"
     assert html == "<p>Hello World</p>"
+
+
+@pytest.mark.asyncio
+async def test_fetch_message_body_simple_text_plain(adapter, mock_imap_client):
+    """Test fetching simple text/plain message body."""
+    # Mock BODYSTRUCTURE for simple text/plain message
+    bodystructure = (b"TEXT", b"PLAIN", ("CHARSET", "UTF-8"), None, None, "7BIT", 11, 1)
+
+    # Mock FETCH responses
+    mock_imap_client.fetch.side_effect = [
+        {42: {b"BODYSTRUCTURE": bodystructure}},  # BODYSTRUCTURE
+        {42: {b"BODY[TEXT]": b"Plain text only"}},  # Body content
+    ]
+
+    # Fetch body
+    text, html = await adapter.fetch_message_body("INBOX", 42)
+
+    # Verify correct part was fetched
+    mock_imap_client.fetch.assert_any_call([42], ["BODY[TEXT]"])
+
+    # Verify only text returned (no HTML)
+    assert text == "Plain text only"
+    assert html is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_message_body_simple_text_html(adapter, mock_imap_client):
+    """Test fetching simple text/html message body."""
+    # Mock BODYSTRUCTURE for simple text/html message
+    bodystructure = (b"TEXT", b"HTML", ("CHARSET", "UTF-8"), None, None, "7BIT", 20, 1)
+
+    # Mock FETCH responses
+    mock_imap_client.fetch.side_effect = [
+        {42: {b"BODYSTRUCTURE": bodystructure}},  # BODYSTRUCTURE
+        {42: {b"BODY[1]": b"<p>HTML only</p>"}},  # Body content
+    ]
+
+    # Fetch body
+    text, html = await adapter.fetch_message_body("INBOX", 42)
+
+    # Verify correct part was fetched
+    mock_imap_client.fetch.assert_any_call([42], ["BODY[1]"])
+
+    # Verify only HTML returned (no plain text)
+    assert text is None
+    assert html == "<p>HTML only</p>"
+
+
+@pytest.mark.asyncio
+async def test_fetch_message_body_no_text_parts(adapter, mock_imap_client):
+    """Test fetching message with no text/html parts (attachments only)."""
+    # Mock BODYSTRUCTURE for message with only attachments
+    bodystructure = (
+        [
+            (b"APPLICATION", b"PDF", ("NAME", "doc.pdf"), None, None, "BASE64", 1024, None),
+        ],
+        b"MIXED",
+    )
+
+    # Mock FETCH response
+    mock_imap_client.fetch.return_value = {42: {b"BODYSTRUCTURE": bodystructure}}
+
+    # Fetch body
+    text, html = await adapter.fetch_message_body("INBOX", 42)
+
+    # Verify only BODYSTRUCTURE was fetched (no body parts)
+    assert mock_imap_client.fetch.call_count == 1
+    mock_imap_client.fetch.assert_called_once_with([42], ["BODYSTRUCTURE"])
+
+    # Verify both are None
+    assert text is None
+    assert html is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_message_body_message_not_found(adapter, mock_imap_client):
+    """Test fetching body for non-existent message."""
+    # Mock empty FETCH response
+    mock_imap_client.fetch.return_value = {}
+
+    # Fetch body
+    text, html = await adapter.fetch_message_body("INBOX", 999)
+
+    # Verify both are None
+    assert text is None
+    assert html is None
 
 
 @pytest.mark.asyncio

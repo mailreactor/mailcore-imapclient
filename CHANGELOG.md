@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CRITICAL: Invalid IMAP body fetch syntax** (Story 3.24)
+  - `fetch_message_body()` now uses proper BODYSTRUCTURE parsing instead of hardcoded invalid syntax
+  - Fixed `BODY[TEXT]` (non-standard) and `BODY[1.HTML]` (invalid) syntax that failed on real IMAP servers
+  - Implemented `_find_body_parts()` helper to parse BODYSTRUCTURE and identify correct part identifiers
+  - Supports simple messages (text/plain or text/html) and multipart/alternative structures
+  - Case-insensitive parsing (servers return lowercase `b"text"`, `b"plain"`)
+  - Each body fetch now requires 2 IMAP operations (BODYSTRUCTURE + BODY[X]) for RFC compliance
+  - **Impact:** Unblocks `message.reply(quote=True)` and `message.forward(include_body=True)` on real servers
+  - **Testing:** All unit tests (36), E2E tests (11), and type checks passing
+
 - **Folder cache corruption on SELECT failure** (Story 3.11.3)
   - `_select_folder()` now invalidates cache when IMAP SELECT command fails
   - Prevents stale cache state causing "No mailbox selected" errors on subsequent operations

@@ -429,6 +429,63 @@ class IMAPClientAdapter(IMAPConnection):
 
         return (standard_flags, custom_flags)
 
+    def _find_body_parts(self, bodystructure: Any) -> tuple[str | None, str | None]:
+        """Parse BODYSTRUCTURE to identify text/html body part identifiers.
+
+        Args:
+            bodystructure: IMAP BODYSTRUCTURE response (complex nested tuple)
+
+        Returns:
+            Tuple of (text_part_id, html_part_id) where each is a part identifier
+            like "1", "2", "TEXT" or None if not found.
+
+        Examples:
+            Simple text/plain: (b"text", b"plain", ...) → ("TEXT", None)
+            Simple text/html: (b"text", b"html", ...) → (None, "1")
+            Multipart: ([(b"text", b"plain", ...), (b"text", b"html", ...)], ...) → ("1", "2")
+
+        Note:
+            IMAP servers return lowercase content types (b"text", b"plain")
+            but we use uppercase "TEXT" for BODY[TEXT] fetch syntax.
+        """
+        if not bodystructure:
+            return (None, None)
+
+        # Simple message: (b"text", b"plain"|b"html", ...)
+        if isinstance(bodystructure[0], bytes):
+            content_type = bodystructure[0].lower()
+            if content_type == b"text":
+                subtype = bodystructure[1].lower()
+                if subtype == b"plain":
+                    return ("TEXT", None)
+                elif subtype == b"html":
+                    return (None, "1")
+            return (None, None)
+
+        # Multipart message: first element is list/tuple of parts
+        # Format: ([(part1), (part2), ...], b"mixed"|b"alternative", ...)
+        if isinstance(bodystructure[0], (list, tuple)):
+            text_part = None
+            html_part = None
+
+            for i, part in enumerate(bodystructure[0], start=1):
+                if not isinstance(part, tuple) or len(part) < 2:
+                    continue
+
+                # Check if this is a text part (case-insensitive)
+                part_type: bytes | None = part[0].lower() if isinstance(part[0], bytes) else None
+                part_subtype: bytes | None = part[1].lower() if isinstance(part[1], bytes) else None
+
+                if part_type == b"text":
+                    if part_subtype == b"plain" and text_part is None:
+                        text_part = str(i)
+                    elif part_subtype == b"html" and html_part is None:
+                        html_part = str(i)
+
+            return (text_part, html_part)
+
+        return (None, None)
+
     def _parse_bodystructure(
         self, bodystructure: Any, folder: str, uid: int, resolver: IMAPResolver
     ) -> list[Attachment]:
@@ -452,8 +509,8 @@ class IMAPClientAdapter(IMAPConnection):
 
         Combines IMAP operations:
         1. SELECT folder (cached)
-        2. FETCH BODY[TEXT] for plain text
-        3. FETCH BODY[1.HTML] for HTML (if present)
+        2. FETCH BODYSTRUCTURE to identify text/html parts
+        3. FETCH BODY[{part}] for identified parts
 
         Args:
             folder: Folder name
@@ -465,27 +522,54 @@ class IMAPClientAdapter(IMAPConnection):
         # SELECT folder (cached)
         await self._select_folder(folder, readonly=True)
 
-        # FETCH both TEXT and HTML parts
-        raw_data = await self._run_sync(self._client.fetch, [uid], ["BODY[TEXT]", "BODY[1.HTML]"])
+        # Step 1: Fetch BODYSTRUCTURE to identify parts
+        structure_data = await self._run_sync(self._client.fetch, [uid], ["BODYSTRUCTURE"])
 
-        if uid not in raw_data:
+        if uid not in structure_data:
             return (None, None)
 
-        data = raw_data[uid]
+        bodystructure = structure_data[uid].get(b"BODYSTRUCTURE")
+        if not bodystructure:
+            return (None, None)
 
-        # Extract plain text (decode UTF-8 bytes to str)
+        # Step 2: Parse BODYSTRUCTURE to find text and HTML parts
+        text_part_id, html_part_id = self._find_body_parts(bodystructure)
+
+        if not text_part_id and not html_part_id:
+            # No text or HTML parts found
+            return (None, None)
+
+        # Step 3: Build FETCH items for identified parts
+        fetch_items = []
+        if text_part_id:
+            fetch_items.append(f"BODY[{text_part_id}]")
+        if html_part_id:
+            fetch_items.append(f"BODY[{html_part_id}]")
+
+        # Step 4: Fetch the body parts
+        body_data = await self._run_sync(self._client.fetch, [uid], fetch_items)
+
+        if uid not in body_data:
+            return (None, None)
+
+        data = body_data[uid]
+
+        # Step 5: Extract and decode body content
         body_text = None
-        if b"BODY[TEXT]" in data:
-            text_bytes = data[b"BODY[TEXT]"]
-            if text_bytes:
-                body_text = text_bytes.decode("utf-8", errors="replace")
+        if text_part_id:
+            text_key = f"BODY[{text_part_id}]".encode()
+            if text_key in data:
+                text_bytes = data[text_key]
+                if text_bytes:
+                    body_text = text_bytes.decode("utf-8", errors="replace")
 
-        # Extract HTML (decode UTF-8 bytes to str)
         body_html = None
-        if b"BODY[1.HTML]" in data:
-            html_bytes = data[b"BODY[1.HTML]"]
-            if html_bytes:
-                body_html = html_bytes.decode("utf-8", errors="replace")
+        if html_part_id:
+            html_key = f"BODY[{html_part_id}]".encode()
+            if html_key in data:
+                html_bytes = data[html_key]
+                if html_bytes:
+                    body_html = html_bytes.decode("utf-8", errors="replace")
 
         return (body_text, body_html)
 
