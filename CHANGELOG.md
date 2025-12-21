@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CRITICAL: UID range queries were not filtering correctly** (Story 3.28 bug fix)
+  - `uid_range()` queries like `folder.uid_range(4, "*")` were returning ALL messages instead of UIDs >= 4
+  - Root cause: Passing `["UID", "4:*"]` to `IMAPClient.search()` - IMAP interprets "UID" as a search criterion, not a command modifier
+  - Fix: Strip "UID" prefix before calling search(), pass just `["4:*"]`
+  - Impact: IDLE polling pattern now works correctly (doesn't re-fetch same messages)
+  - Testing: Added test `test_uid_range_query_strips_uid_prefix` to verify fix
+
+### Added
+- **IDLE Protocol Stubs (Story 3.28):**
+  - Implemented `select_folder()` method using `IMAPClient.select_folder()`
+  - Returns dict with `exists`, `recent`, `uidvalidity` keys
+  - Added IDLE method stubs: `idle_start()`, `idle_wait()`, `idle_done()` (all raise NotImplementedError)
+  - Error messages guide users to mailcore-aioimaplib for IDLE support
+  - Note: IMAPClientAdapter **cannot** support IDLE due to synchronous IMAPClient library limitation
+
 - **CRITICAL: Invalid IMAP body fetch syntax** (Story 3.24)
   - `fetch_message_body()` now uses proper BODYSTRUCTURE parsing instead of hardcoded invalid syntax
   - Fixed `BODY[TEXT]` (non-standard) and `BODY[1.HTML]` (invalid) syntax that failed on real IMAP servers

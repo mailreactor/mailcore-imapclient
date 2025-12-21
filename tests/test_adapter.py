@@ -1065,3 +1065,95 @@ async def test_append_message_handles_no_appenduid(adapter):
 
     # Should return 0 when no APPENDUID
     assert uid == 0
+
+
+# IDLE Protocol Tests (Story 3.28)
+
+
+@pytest.mark.asyncio
+async def test_select_folder_returns_dict_keys(adapter):
+    """Test that select_folder() returns dict with expected keys."""
+    # Mock IMAPClient response with byte keys
+    adapter._client.select_folder.return_value = {
+        b"EXISTS": 42,
+        b"RECENT": 3,
+        b"UIDVALIDITY": 1234567890,
+    }
+
+    result = await adapter.select_folder("INBOX")
+
+    # Verify dict keys and values
+    assert result == {"exists": 42, "recent": 3, "uidvalidity": 1234567890}
+    adapter._client.select_folder.assert_called_once_with("INBOX")
+
+
+@pytest.mark.asyncio
+async def test_idle_start_raises_not_implemented(adapter):
+    """Test that idle_start() raises NotImplementedError with helpful message."""
+    import pytest
+
+    with pytest.raises(NotImplementedError) as exc_info:
+        await adapter.idle_start()
+
+    # Verify error message guides user to mailcore-aioimaplib
+    assert "mailcore-aioimaplib" in str(exc_info.value)
+    assert "synchronous IMAPClient" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_idle_wait_raises_not_implemented(adapter):
+    """Test that idle_wait() raises NotImplementedError."""
+    import pytest
+
+    with pytest.raises(NotImplementedError) as exc_info:
+        await adapter.idle_wait(timeout=1800)
+
+    assert "IDLE not supported" in str(exc_info.value)
+    assert "mailcore-aioimaplib" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_idle_done_raises_not_implemented(adapter):
+    """Test that idle_done() raises NotImplementedError."""
+    import pytest
+
+    with pytest.raises(NotImplementedError) as exc_info:
+        await adapter.idle_done()
+
+    assert "IDLE not supported" in str(exc_info.value)
+    assert "mailcore-aioimaplib" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_uid_range_query_passes_sequence_set(adapter):
+    """Test that UID range queries pass sequence set directly to IMAPClient.search().
+
+    Bug fix: Story 3.28 - Q.uid_range() now returns ["4:*"] (sequence set),
+    not ["UID", "4:*"] (invalid search criterion). Adapter passes it through unchanged.
+    """
+    from mailcore import Q
+
+    # Mock IMAPClient.search to return UIDs
+    adapter._client.search.return_value = [5, 6, 7]
+
+    # Mock fetch to return empty dict (we only care about search criteria)
+    adapter._client.fetch.return_value = {}
+
+    # Mock folder status
+    adapter._client.folder_status.return_value = {
+        b"MESSAGES": 10,
+        b"UNSEEN": 3,
+        b"UIDNEXT": 8,
+    }
+
+    # Query with UID range
+    query = Q.uid_range(4, "*")
+    result = await adapter.query_messages("INBOX", query)
+
+    # Verify search was called with sequence set (no "UID" prefix)
+    adapter._client.search.assert_called_once()
+    search_criteria = adapter._client.search.call_args[0][0]
+    assert search_criteria == ["4:*"], f"Expected ['4:*'], got {search_criteria}"
+
+    # Verify search returned UIDs (even though fetch is empty, we got the UIDs from search)
+    assert result.total_matches == 3

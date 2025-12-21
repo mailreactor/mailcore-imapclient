@@ -211,6 +211,8 @@ class IMAPClientAdapter(IMAPConnection):
         await self._select_folder(folder, readonly=True)
 
         # SEARCH with query criteria
+        # Query.to_imap_criteria() returns proper IMAP search criteria
+        # IMAPClient.search() always returns UIDs (not sequence numbers)
         imap_criteria = query.to_imap_criteria()
         all_uids = await self._run_sync(self._client.search, imap_criteria)
 
@@ -996,6 +998,73 @@ class IMAPClientAdapter(IMAPConnection):
 
         uid: int = await self._run_sync(_append)
         return uid
+
+    async def select_folder(self, folder: str) -> dict[str, Any]:
+        """SELECT folder for operations (required before IDLE).
+
+        IMAP operation: SELECT
+
+        Args:
+            folder: Folder name to select
+
+        Returns:
+            Dictionary with folder status:
+                - exists: Total message count
+                - recent: Count of messages with \\Recent flag
+                - uidvalidity: UIDVALIDITY value
+
+        Raises:
+            FolderNotFoundError: If folder doesn't exist
+        """
+
+        def _select() -> dict[str, Any]:
+            # IMAPClient.select_folder returns dict with byte keys
+            response: dict[bytes, Any] = self._client.select_folder(folder)
+            return {
+                "exists": int(response[b"EXISTS"]),
+                "recent": int(response[b"RECENT"]),
+                "uidvalidity": int(response[b"UIDVALIDITY"]),
+            }
+
+        result: dict[str, Any] = await self._run_sync(_select)
+        return result
+
+    async def idle_start(self) -> None:
+        """Enter IDLE mode (NOT SUPPORTED by IMAPClientAdapter).
+
+        Raises:
+            NotImplementedError: IMAPClientAdapter uses synchronous IMAPClient which
+                                cannot support IDLE protocol. For IDLE support, use
+                                mailcore-aioimaplib adapter.
+        """
+        raise NotImplementedError(
+            "IDLE not supported by IMAPClientAdapter (uses synchronous IMAPClient). "
+            "For IDLE support, use mailcore-aioimaplib adapter: "
+            "pip install mailcore-aioimaplib"
+        )
+
+    async def idle_wait(self, timeout: int = 1800) -> list[str]:
+        """Wait for IDLE events (NOT SUPPORTED by IMAPClientAdapter).
+
+        Args:
+            timeout: Unused (IDLE not supported)
+
+        Raises:
+            NotImplementedError: IDLE not supported by this adapter
+        """
+        raise NotImplementedError(
+            "IDLE not supported by IMAPClientAdapter. Use mailcore-aioimaplib adapter for IDLE support."
+        )
+
+    async def idle_done(self) -> None:
+        """Exit IDLE mode (NOT SUPPORTED by IMAPClientAdapter).
+
+        Raises:
+            NotImplementedError: IDLE not supported by this adapter
+        """
+        raise NotImplementedError(
+            "IDLE not supported by IMAPClientAdapter. Use mailcore-aioimaplib adapter for IDLE support."
+        )
 
     async def execute_raw_command(self, command: str, *args: Any) -> Any:
         """Execute raw IMAP command (escape hatch).
