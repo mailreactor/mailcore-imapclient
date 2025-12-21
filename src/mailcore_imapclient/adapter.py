@@ -13,7 +13,9 @@ base64-encoded bytes).
 import asyncio
 import base64
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from email.header import decode_header
+from email.message import EmailMessage
 from functools import partial
 from typing import Any
 
@@ -894,6 +896,117 @@ class IMAPClientAdapter(IMAPConnection):
 
         # Fallback if folder not found in list
         return FolderInfo(name=new_name, has_children=False, flags=[])
+
+    async def append_message(
+        self,
+        folder: str,
+        from_: EmailAddress,
+        to: list[EmailAddress],
+        subject: str,
+        body_text: str | None = None,
+        body_html: str | None = None,
+        cc: list[EmailAddress] | None = None,
+        attachments: list[Attachment] | None = None,
+        in_reply_to: str | None = None,
+        references: list[str] | None = None,
+        flags: set[MessageFlag] | None = None,
+        custom_flags: set[str] | None = None,
+    ) -> int:
+        """Append message to IMAP folder.
+
+        Builds RFC 5322 MIME message from domain types.
+        BCC intentionally excluded (security requirement).
+
+        Args:
+            folder: Folder name
+            from_: Sender address
+            to: Recipients (required)
+            subject: Email subject
+            body_text: Plain text body (optional)
+            body_html: HTML body (optional)
+            cc: CC recipients (optional)
+            attachments: File attachments (optional)
+            in_reply_to: Message-ID this replies to (optional)
+            references: Thread chain (optional)
+            flags: Standard IMAP flags
+            custom_flags: Custom IMAP keywords
+
+        Returns:
+            UID of appended message
+        """
+        # Build MIME message using stdlib EmailMessage
+        msg = EmailMessage()
+
+        # Headers
+        msg["From"] = from_.to_rfc5322()
+        # To can be empty for incomplete drafts
+        if to:
+            msg["To"] = ", ".join([addr.to_rfc5322() for addr in to])
+        if cc:
+            msg["Cc"] = ", ".join([addr.to_rfc5322() for addr in cc])
+        msg["Subject"] = subject
+        msg["Date"] = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+
+        # Threading headers
+        if in_reply_to:
+            msg["In-Reply-To"] = in_reply_to
+        if references:
+            msg["References"] = " ".join(references)
+
+        # Body
+        if body_html and body_text:
+            # Both HTML and text - create multipart/alternative
+            msg.set_content(body_text)
+            msg.add_alternative(body_html, subtype="html")
+        elif body_html:
+            # HTML only
+            msg.set_content(body_html, subtype="html")
+        elif body_text:
+            # Text only
+            msg.set_content(body_text)
+        else:
+            # Empty body (attachment-only draft)
+            msg.set_content("")
+
+        # Attachments
+        if attachments:
+            for att in attachments:
+                # Fetch attachment content
+                content = await att.read()
+
+                # Determine maintype and subtype from content_type
+                content_type = att.content_type or "application/octet-stream"
+                maintype, _, subtype = content_type.partition("/")
+
+                # Add attachment
+                msg.add_attachment(content, maintype=maintype, subtype=subtype, filename=att.filename)
+
+        # Convert Message to bytes
+        mime_bytes = msg.as_bytes()
+
+        # Combine flags
+        flag_strings = []
+        if flags:
+            flag_strings.extend([flag.value for flag in flags])
+        if custom_flags:
+            flag_strings.extend(list(custom_flags))
+
+        # APPEND to folder with flags
+        def _append() -> int:
+            # APPEND command (IMAPClient.append returns (APPEND uid))
+            result = self._client.append(folder, mime_bytes, flags=flag_strings if flag_strings else None)
+
+            # Extract UID from result
+            # IMAPClient.append returns None if no APPENDUID, otherwise (uidvalidity, [uid])
+            if result and len(result) == 2:
+                # APPENDUID response: (uidvalidity, [uids])
+                return int(result[1][0])  # Return first UID
+            else:
+                # No APPENDUID - return 0 (can't determine UID)
+                return 0
+
+        uid: int = await self._run_sync(_append)
+        return uid
 
     async def execute_raw_command(self, command: str, *args: Any) -> Any:
         """Execute raw IMAP command (escape hatch).

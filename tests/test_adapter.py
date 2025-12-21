@@ -952,3 +952,115 @@ async def test_select_folder_invalidates_cache_on_failure(adapter, mock_imap_cli
     # Cache should be invalidated
     assert adapter._selected_folder is None
     assert adapter._selected_folder_readonly is True
+
+
+# append_message() tests
+
+
+@pytest.mark.asyncio
+async def test_append_message_builds_mime_and_returns_uid(adapter):
+    """Test that append_message builds MIME message and returns UID from APPEND."""
+    from mailcore import EmailAddress, MessageFlag
+
+    # Simulate APPENDUID response: (uidvalidity, [uid])
+    adapter._client.append.return_value = (12345, [42])
+
+    uid = await adapter.append_message(
+        folder="Drafts",
+        from_=EmailAddress("me@example.com"),
+        to=[EmailAddress("alice@example.com")],
+        subject="Test Subject",
+        body_text="Test body",
+        flags={MessageFlag.DRAFT},
+    )
+
+    # Verify UID returned
+    assert uid == 42
+
+    # Verify append was called
+    assert adapter._client.append.called
+    call_args = adapter._client.append.call_args
+
+    # Verify folder
+    assert call_args.args[0] == "Drafts"
+
+    # Verify MIME message (bytes)
+    mime_bytes = call_args.args[1]
+    assert isinstance(mime_bytes, bytes)
+    assert b"From: me@example.com" in mime_bytes
+    assert b"To: alice@example.com" in mime_bytes
+    assert b"Subject: Test Subject" in mime_bytes
+    assert b"Test body" in mime_bytes
+
+    # Verify flags
+    assert MessageFlag.DRAFT.value in call_args.kwargs["flags"]
+
+
+@pytest.mark.asyncio
+async def test_append_message_combines_flags_and_custom_flags(adapter):
+    """Test that append_message combines standard and custom flags."""
+    from mailcore import EmailAddress, MessageFlag
+
+    adapter._client.append.return_value = (12345, [42])
+
+    await adapter.append_message(
+        folder="Drafts",
+        from_=EmailAddress("me@example.com"),
+        to=[EmailAddress("alice@example.com")],
+        subject="Test",
+        flags={MessageFlag.DRAFT, MessageFlag.SEEN},
+        custom_flags={"$Forwarded", "$MDNSent"},
+    )
+
+    call_args = adapter._client.append.call_args
+    flags = call_args.kwargs["flags"]
+
+    # Verify both standard and custom flags present
+    assert MessageFlag.DRAFT.value in flags
+    assert MessageFlag.SEEN.value in flags
+    assert "$Forwarded" in flags
+    assert "$MDNSent" in flags
+
+
+@pytest.mark.asyncio
+async def test_append_message_excludes_bcc_from_mime(adapter):
+    """Test that append_message does not include BCC in MIME headers (security)."""
+    from mailcore import EmailAddress, MessageFlag
+
+    adapter._client.append.return_value = (12345, [42])
+
+    # Note: BCC is intentionally NOT a parameter in append_message (security requirement)
+    await adapter.append_message(
+        folder="Drafts",
+        from_=EmailAddress("me@example.com"),
+        to=[EmailAddress("alice@example.com")],
+        subject="Test",
+        body_text="Body",
+        flags={MessageFlag.DRAFT},
+    )
+
+    call_args = adapter._client.append.call_args
+    mime_bytes = call_args.args[1]
+
+    # Verify BCC header not present
+    assert b"Bcc:" not in mime_bytes
+
+
+@pytest.mark.asyncio
+async def test_append_message_handles_no_appenduid(adapter):
+    """Test that append_message returns 0 if server doesn't provide APPENDUID."""
+    from mailcore import EmailAddress, MessageFlag
+
+    # No APPENDUID response
+    adapter._client.append.return_value = None
+
+    uid = await adapter.append_message(
+        folder="Drafts",
+        from_=EmailAddress("me@example.com"),
+        to=[EmailAddress("alice@example.com")],
+        subject="Test",
+        flags={MessageFlag.DRAFT},
+    )
+
+    # Should return 0 when no APPENDUID
+    assert uid == 0
