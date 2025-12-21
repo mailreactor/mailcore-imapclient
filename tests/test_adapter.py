@@ -395,14 +395,15 @@ async def test_copy_message_uses_copy_command(adapter, mock_imap_client):
 
 @pytest.mark.asyncio
 async def test_delete_message_permanent_true_expunges(adapter, mock_imap_client):
-    """Test that delete_message with permanent=True expunges immediately."""
+    """Test that delete_message permanently expunges."""
     # Delete message permanently
-    await adapter.delete_message("INBOX", 42, permanent=True)
+    await adapter.delete_message("INBOX", 42)
 
-    # Verify STORE \\Deleted was called
+    # Verify folder selected (read-write)
+    mock_imap_client.select_folder.assert_called_once_with("INBOX", readonly=False)
+
+    # Verify flag and expunge
     mock_imap_client.add_flags.assert_called_once_with([42], ["\\Deleted"])
-
-    # Verify EXPUNGE was called
     mock_imap_client.expunge.assert_called_once()
 
 

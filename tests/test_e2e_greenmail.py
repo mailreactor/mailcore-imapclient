@@ -240,7 +240,7 @@ async def test_e2e_delete_message_greenmail(greenmail_adapter):
     orig_count = result.total_in_folder
 
     # Delete permanently
-    await greenmail_adapter.delete_message("INBOX", message.uid, permanent=True)
+    await greenmail_adapter.delete_message("INBOX", message.uid)
 
     # Verify deleted - count should decrease
     result_after = await greenmail_adapter.query_messages("INBOX", Q.all())

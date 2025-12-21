@@ -765,26 +765,15 @@ class IMAPClientAdapter(IMAPConnection):
         # If COPYUID not available, return 0 (unknown UID)
         return 0
 
-    async def delete_message(self, folder: str, uid: int, permanent: bool = False) -> None:
-        """Delete message.
+    async def delete_message(self, folder: str, uid: int) -> None:
+        """Permanently delete message from folder.
 
-        Args:
-            folder: Folder name
-            uid: Message UID
-            permanent: If True, expunge immediately. If False, copy to Trash first.
+        IMAP operations: SELECT + STORE \\Deleted + EXPUNGE
         """
-        # SELECT folder (read-write for delete)
+        # SELECT folder (read-write mode for delete)
         await self._select_folder(folder, readonly=False)
 
-        if not permanent:
-            # Copy to Trash before deleting
-            try:
-                await self._run_sync(self._client.copy, [uid], "Trash")
-            except Exception:
-                # Trash folder may not exist - ignore and proceed with deletion
-                pass
-
-        # Mark as deleted and expunge
+        # Mark as deleted and expunge immediately
         await self._run_sync(self._client.add_flags, [uid], ["\\Deleted"])
         await self._run_sync(self._client.expunge)
 
