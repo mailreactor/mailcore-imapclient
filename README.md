@@ -1,5 +1,9 @@
 # mailcore-imapclient
 
+[![PyPI](https://img.shields.io/pypi/v/mailcore-imapclient)](https://pypi.org/project/mailcore-imapclient/)
+[![Python Version](https://img.shields.io/pypi/pyversions/mailcore-imapclient)](https://pypi.org/project/mailcore-imapclient/)
+[![License](https://img.shields.io/pypi/l/mailcore-imapclient)](https://github.com/mailreactor/mailcore-imapclient/blob/main/LICENSE)
+
 **IMAPClient adapter for [mailcore](https://github.com/mailreactor/mailcore)** - wraps synchronous IMAPClient with async executor pattern for BSD-3 licensed IMAP support.
 
 This adapter enables mailcore to work with IMAPClient, providing a commercial-friendly (BSD-3) alternative to GPL-licensed IMAP libraries. For a native async GPL-3 licensed alternative, see [mailcore-aioimaplib](https://github.com/mailreactor/mailcore-aioimaplib).
