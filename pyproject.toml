@@ -10,11 +10,24 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Mail Reactor Contributors", email = "maintainers@mailreactor.dev"},
+    {name = "Hans Christian v. Stockhausen", email = "hc@vst.io"},
 ]
 dependencies = [
-    "mailcore>=1.0.0,<2.0.0",
+    "mailcore>=0.1.0,<1.0.0",
     "imapclient>=3.0.0",
+]
+keywords = ["mailcore", "imap", "email", "adapter", "imapclient", "async"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Email",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Framework :: AsyncIO",
 ]
 
 [project.optional-dependencies]
