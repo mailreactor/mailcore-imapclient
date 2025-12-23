@@ -1,0 +1,35 @@
+# Virtual environments
+.venv
+.direnv
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov/
+.tox/
+.mypy_cache
+.ruff_cache
+
+# Build
+dist/
+build/
+*.egg-info
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
