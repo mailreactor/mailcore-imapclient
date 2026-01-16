@@ -67,6 +67,9 @@ class IMAPClientAdapter(IMAPConnection):
     - Constructor connects and authenticates immediately
     - Stores IMAPClient instance and ThreadPoolExecutor
     - Connection lifecycle managed by adapter (mailcore doesn't call connect/disconnect)
+    - NOOP health check before each operation (5s timeout for fast stale detection)
+    - Automatic reconnection if connection is dead (typically after 30min idle)
+    - Folder cache invalidated on reconnection
 
     Args:
         host: IMAP server hostname
@@ -142,8 +145,54 @@ class IMAPClientAdapter(IMAPConnection):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(self._executor, partial(func, *args, **kwargs))
 
+    async def _ensure_connected(self) -> None:
+        """Check connection health and reconnect if stale.
+
+        Uses IMAP NOOP command with 5-second timeout to detect stale connections
+        quickly. If connection is dead, creates new IMAPClient instance and
+        re-authenticates.
+
+        This prevents "socket error: EOF" on operations after idle timeout
+        (typically 30 minutes for Gmail).
+
+        Raises:
+            Exception: If reconnection fails (authentication, network, etc.)
+        """
+        try:
+            # Health check with 5s timeout (fail fast on stale connections)
+            await asyncio.wait_for(self._run_sync(self._client.noop), timeout=5)
+        except Exception:
+            # Connection dead - reconnect
+            try:
+                # Close old connection if possible
+                try:
+                    await self._run_sync(self._client.logout)
+                except Exception:
+                    pass  # Already dead, ignore cleanup errors
+
+                # Create new connection
+                self._client = IMAPClient(
+                    host=self._host,
+                    port=self._port,
+                    ssl=self._ssl,
+                    timeout=self._timeout,
+                )
+                await self._run_sync(self._client.login, self._username, self._password)
+
+                # Invalidate folder cache (new connection has no folder selected)
+                self._selected_folder = None
+                self._selected_folder_readonly = True
+            except Exception:
+                # Reconnection failed - invalidate cache and re-raise
+                self._selected_folder = None
+                self._selected_folder_readonly = True
+                raise
+
     async def _select_folder(self, folder: str, readonly: bool = True) -> None:
         """Select folder if not already selected (caching optimization).
+
+        Checks connection health before selecting to prevent operations on
+        stale connections.
 
         Args:
             folder: Folder name to select
@@ -152,6 +201,9 @@ class IMAPClientAdapter(IMAPConnection):
         Raises:
             FolderNotFoundError: If folder doesn't exist
         """
+        # Check connection health before any operation
+        await self._ensure_connected()
+
         # Re-select if folder changed OR readonly mode changed
         if self._selected_folder != folder or self._selected_folder_readonly != readonly:
             try:
@@ -785,6 +837,9 @@ class IMAPClientAdapter(IMAPConnection):
         Returns:
             List of FolderInfo with name, special_use, has_children, flags
         """
+        # Check connection health before operation
+        await self._ensure_connected()
+
         # LIST command returns folder list
         folders_raw = await self._run_sync(self._client.list_folders)
 
@@ -818,6 +873,9 @@ class IMAPClientAdapter(IMAPConnection):
         Returns:
             FolderStatus with message_count, unseen_count, uidnext
         """
+        # Check connection health before operation
+        await self._ensure_connected()
+
         # Try STATUS command first (doesn't require SELECT)
         try:
             status_raw = await self._run_sync(self._client.folder_status, folder, ["MESSAGES", "UNSEEN", "UIDNEXT"])
@@ -846,6 +904,9 @@ class IMAPClientAdapter(IMAPConnection):
         Returns:
             FolderInfo for created folder
         """
+        # Check connection health before operation
+        await self._ensure_connected()
+
         # CREATE folder
         await self._run_sync(self._client.create_folder, name)
 
@@ -864,6 +925,9 @@ class IMAPClientAdapter(IMAPConnection):
         Args:
             name: Folder name
         """
+        # Check connection health before operation
+        await self._ensure_connected()
+
         await self._run_sync(self._client.delete_folder, name)
 
     async def rename_folder(self, old_name: str, new_name: str) -> FolderInfo:
@@ -876,6 +940,9 @@ class IMAPClientAdapter(IMAPConnection):
         Returns:
             FolderInfo for renamed folder
         """
+        # Check connection health before operation
+        await self._ensure_connected()
+
         # RENAME folder
         await self._run_sync(self._client.rename_folder, old_name, new_name)
 
@@ -925,6 +992,9 @@ class IMAPClientAdapter(IMAPConnection):
         Returns:
             UID of appended message
         """
+        # Check connection health before operation
+        await self._ensure_connected()
+
         # Build MIME message using stdlib EmailMessage
         msg = EmailMessage()
 
@@ -1016,6 +1086,8 @@ class IMAPClientAdapter(IMAPConnection):
         Raises:
             FolderNotFoundError: If folder doesn't exist
         """
+        # Check connection health before operation
+        await self._ensure_connected()
 
         def _select() -> dict[str, Any]:
             # IMAPClient.select_folder returns dict with byte keys
