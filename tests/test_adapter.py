@@ -1024,27 +1024,29 @@ async def test_append_message_combines_flags_and_custom_flags(adapter):
 
 
 @pytest.mark.asyncio
-async def test_append_message_excludes_bcc_from_mime(adapter):
-    """Test that append_message does not include BCC in MIME headers (security)."""
+async def test_append_message_includes_bcc_in_mime(adapter):
+    """Test that append_message includes BCC in MIME headers (matches Outlook/Gmail)."""
     from mailcore import EmailAddress, MessageFlag
 
     adapter._client.append.return_value = (12345, [42])
 
-    # Note: BCC is intentionally NOT a parameter in append_message (security requirement)
+    # BCC is now supported and preserved in saved messages
     await adapter.append_message(
         folder="Drafts",
         from_=EmailAddress("me@example.com"),
         to=[EmailAddress("alice@example.com")],
         subject="Test",
         body_text="Body",
+        bcc=[EmailAddress("secret@example.com")],
         flags={MessageFlag.DRAFT},
     )
 
     call_args = adapter._client.append.call_args
     mime_bytes = call_args.args[1]
 
-    # Verify BCC header not present
-    assert b"Bcc:" not in mime_bytes
+    # Verify BCC header IS present (preserved in saved messages)
+    assert b"Bcc:" in mime_bytes
+    assert b"secret@example.com" in mime_bytes
 
 
 @pytest.mark.asyncio
@@ -1065,6 +1067,34 @@ async def test_append_message_handles_no_appenduid(adapter):
 
     # Should return 0 when no APPENDUID
     assert uid == 0
+
+
+@pytest.mark.asyncio
+async def test_append_message_with_no_flags(adapter):
+    """Test that append_message works with empty flags (no flags parameter passed to IMAPClient)."""
+    from mailcore import EmailAddress
+
+    adapter._client.append.return_value = (12345, [99])
+
+    # Append with no flags at all (empty set)
+    uid = await adapter.append_message(
+        folder="INBOX",
+        from_=EmailAddress("me@example.com"),
+        to=[EmailAddress("alice@example.com")],
+        subject="Test",
+        body_text="Body",
+        flags=None,  # No flags
+    )
+
+    # Should succeed and return UID
+    assert uid == 99
+
+    # Verify IMAPClient.append was called WITHOUT flags parameter
+    call_args = adapter._client.append.call_args
+    assert "flags" not in call_args.kwargs or call_args.kwargs.get("flags") is None
+    # Verify folder and mime_bytes were passed
+    assert call_args.args[0] == "INBOX"
+    assert isinstance(call_args.args[1], bytes)
 
 
 # IDLE Protocol Tests (Story 3.28)

@@ -160,6 +160,7 @@ class IMAPClientAdapter(IMAPConnection):
         """
         try:
             # Health check with 5s timeout (fail fast on stale connections)
+            print("Testing connection.")
             await asyncio.wait_for(self._run_sync(self._client.noop), timeout=5)
         except Exception:
             # Connection dead - reconnect
@@ -171,6 +172,7 @@ class IMAPClientAdapter(IMAPConnection):
                     pass  # Already dead, ignore cleanup errors
 
                 # Create new connection
+                print("Create new connection.")
                 self._client = IMAPClient(
                     host=self._host,
                     port=self._port,
@@ -964,6 +966,7 @@ class IMAPClientAdapter(IMAPConnection):
         body_text: str | None = None,
         body_html: str | None = None,
         cc: list[EmailAddress] | None = None,
+        bcc: list[EmailAddress] | None = None,
         attachments: list[Attachment] | None = None,
         in_reply_to: str | None = None,
         references: list[str] | None = None,
@@ -973,7 +976,7 @@ class IMAPClientAdapter(IMAPConnection):
         """Append message to IMAP folder.
 
         Builds RFC 5322 MIME message from domain types.
-        BCC intentionally excluded (security requirement).
+        BCC is preserved in saved messages (matches Outlook/Gmail behavior).
 
         Args:
             folder: Folder name
@@ -983,6 +986,7 @@ class IMAPClientAdapter(IMAPConnection):
             body_text: Plain text body (optional)
             body_html: HTML body (optional)
             cc: CC recipients (optional)
+            bcc: BCC recipients (optional, preserved in saved messages)
             attachments: File attachments (optional)
             in_reply_to: Message-ID this replies to (optional)
             references: Thread chain (optional)
@@ -1005,6 +1009,8 @@ class IMAPClientAdapter(IMAPConnection):
             msg["To"] = ", ".join([addr.to_rfc5322() for addr in to])
         if cc:
             msg["Cc"] = ", ".join([addr.to_rfc5322() for addr in cc])
+        if bcc:
+            msg["Bcc"] = ", ".join([addr.to_rfc5322() for addr in bcc])
         msg["Subject"] = subject
         msg["Date"] = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
 
@@ -1055,7 +1061,11 @@ class IMAPClientAdapter(IMAPConnection):
         # APPEND to folder with flags
         def _append() -> int:
             # APPEND command (IMAPClient.append returns (APPEND uid))
-            result = self._client.append(folder, mime_bytes, flags=flag_strings if flag_strings else None)
+            # Only pass flags parameter if we have flags (IMAPClient fails if flags=None)
+            if flag_strings:
+                result = self._client.append(folder, mime_bytes, flags=flag_strings)
+            else:
+                result = self._client.append(folder, mime_bytes)
 
             # Extract UID from result
             # IMAPClient.append returns None if no APPENDUID, otherwise (uidvalidity, [uid])
