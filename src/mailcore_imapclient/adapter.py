@@ -165,9 +165,13 @@ class IMAPClientAdapter(IMAPConnection):
         except Exception:
             # Connection dead - reconnect
             try:
-                # Close old connection if possible
+                # Forcefully close old connection socket (don't try to send LOGOUT - it will fail)
                 try:
-                    await self._run_sync(self._client.logout)
+                    if hasattr(self._client, "shutdown"):
+                        await self._run_sync(self._client.shutdown)
+                    elif hasattr(self._client, "_imap") and hasattr(self._client._imap, "shutdown"):
+                        # IMAPClient wraps imaplib IMAP4 - close at that level
+                        self._client._imap.shutdown()
                 except Exception:
                     pass  # Already dead, ignore cleanup errors
 
