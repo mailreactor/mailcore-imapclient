@@ -160,7 +160,6 @@ class IMAPClientAdapter(IMAPConnection):
         """
         try:
             # Health check with 5s timeout (fail fast on stale connections)
-            print("Testing connection.")
             await asyncio.wait_for(self._run_sync(self._client.noop), timeout=5)
         except Exception:
             # Connection dead - reconnect
@@ -176,7 +175,6 @@ class IMAPClientAdapter(IMAPConnection):
                     pass  # Already dead, ignore cleanup errors
 
                 # Create new connection
-                print("Create new connection.")
                 self._client = IMAPClient(
                     host=self._host,
                     port=self._port,
